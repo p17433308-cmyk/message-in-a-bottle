@@ -23,9 +23,13 @@ Pre-emptive answer to "what's new vs. existing work?"
 ## Defensible contributions
 1. **Registration-correlated detection** — FLOTSAM joins Cache Storage entries to
    the actual Service Worker **registration** (origin → script, scope,
-   updateViaCache) recovered from `Service Worker/Database`. That turns "a
-   suspicious file" into "a payload served by a LIVE, origin-wide worker." No
-   open tool does this correlation.
+   updateViaCache) by parsing the `Service Worker/Database` **LevelDB properly**
+   (write-ahead log + SSTables, sequence-ordered, **tombstone-aware** so
+   unregistered/stale workers are excluded) and decoding the registration
+   **protobuf**. It also reverses Chromium's CacheStorage **origin-hash**
+   (`SHA1("<scheme>_<host>_<port>")`) to attribute findings to the real origin.
+   That turns "a suspicious file" into "a payload served by a LIVE, origin-wide
+   worker." No open tool does this correlation — and it is all zero-dependency.
 2. **A low-false-positive, extensible ruleset** — full-body (not preview) signature
    scanning after decompression, a CDN allowlist, weighted scoring, and
    user-loadable YARA-style rules.

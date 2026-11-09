@@ -9,10 +9,30 @@ import math
 import os
 import time
 from collections import Counter
+from urllib.parse import urlparse
 
 from .models import Inventory, OriginStore, CacheBucket, CacheEntry
 from .simplecache import parse_entry, parse_meta, decompress, SimpleCacheError
 from .swreg import scan_registrations
+
+_DEFAULT_PORT = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21, "file": 0}
+
+
+def _origin_of(url: str) -> str:
+    p = urlparse(url)
+    return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else ""
+
+
+def _origin_identifier_hashes(origin: str) -> list[str]:
+    """Chromium names the CacheStorage dir SHA1('<scheme>_<host>_<port>').
+    Default ports have used both the real value and 0, so we offer both."""
+    p = urlparse(origin)
+    scheme, host = p.scheme, (p.hostname or "")
+    if not scheme or not host:
+        return []
+    port = p.port if p.port is not None else _DEFAULT_PORT.get(scheme, 0)
+    ids = {f"{scheme}_{host}_{port}", f"{scheme}_{host}_0"}
+    return [hashlib.sha1(s.encode()).hexdigest() for s in ids]
 
 
 def _entropy(b: bytes) -> float:
@@ -133,4 +153,22 @@ def deep_extract(profile_dir: str) -> Inventory:
                 index_format=fmt, mtime=os.path.getmtime(cdir),
                 entries=read_cache_dir(cdir)))
         inv.origins.append(store)
+
+    # Map each opaque origin-hash directory back to its real origin by hashing
+    # candidate origins (from registrations + cached entry URLs) and matching.
+    candidates = {r.origin for r in inv.registrations if r.origin}
+    for store in inv.origins:
+        for c in store.caches:
+            for e in c.entries:
+                o = _origin_of(e.request_url)
+                if o:
+                    candidates.add(o)
+    hash_to_origin: dict[str, str] = {}
+    for o in candidates:
+        for h in _origin_identifier_hashes(o):
+            hash_to_origin[h] = o
+    for store in inv.origins:
+        real = hash_to_origin.get(store.origin_hash)
+        if real:
+            store.origin = real
     return inv

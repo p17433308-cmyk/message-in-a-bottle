@@ -39,10 +39,13 @@ and times them:
 
 Verdicts: `CLEAN` · `SUSPICIOUS` · `COMPROMISED`, from a **weighted risk score** (not just max severity).
 
-**Also:** parses real Service Worker registrations (`Service Worker/Database` LevelDB),
-decompresses gzip/deflate (brotli if available) before analysis, verifies CRC32,
-builds a timeline, notes sibling channels (IndexedDB / Push), and loads custom
-rules with `--rules yourrules.json`.
+**Also:** parses the `Service Worker/Database` **LevelDB** for real registrations
+(write-ahead log + SSTables, sequence-ordered and **tombstone-aware**, protobuf
+decoded) and reverses Chromium's CacheStorage **origin-hash** to attribute
+findings to the real origin; decompresses gzip/deflate (brotli if available)
+before analysis; verifies CRC32; builds a timeline; notes sibling channels
+(IndexedDB / Push); and loads custom rules with `--rules yourrules.json`.
+Entirely zero-dependency (pure stdlib).
 
 ## Quick start
 
