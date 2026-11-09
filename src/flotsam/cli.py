@@ -16,6 +16,7 @@ import sys
 from . import __version__
 from .inventory import load_json, from_profile, make_sim
 from .hunt import hunt
+from .rules import load_rules
 from .report import to_markdown
 
 _MARK = {"clean": "\N{LARGE GREEN CIRCLE} CLEAN",
@@ -25,16 +26,21 @@ _SEV = {"critical": "CRIT", "high": "HIGH", "medium": "MED ", "low": "LOW ", "in
 
 
 def cmd_hunt(args) -> int:
-    res = hunt(load_json(args.inventory))
+    res = hunt(load_json(args.inventory), rules=load_rules(args.rules or None))
     if args.json:
         print(res.to_json())
         return 0
     print(f"\n  FLOTSAM v{__version__} — Service Worker Cache hunt")
     print("  " + "-" * 56)
     s = res.stats
-    print(f"  Scanned: {s['origins']} origins, {s['caches']} caches, {s['entries']} entries")
+    print(f"  Scanned: {s['origins']} origins, {s['caches']} caches, "
+          f"{s['entries']} entries, {s.get('registrations',0)} SW registrations")
     print(f"  VERDICT: {_MARK.get(res.verdict.value, res.verdict.value)}  "
-          f"({s['findings']} findings, top={s['top_severity']})")
+          f"(risk score {s.get('risk_score',0)}, {s['findings']} findings, "
+          f"top={s['top_severity']})")
+    planted = sum(1 for t in res.timeline if t.get("recently_planted"))
+    if planted:
+        print(f"  Timeline: {planted} entr(y/ies) planted after the cache baseline")
     if res.findings:
         print("  Findings:")
         for f in res.findings:
@@ -68,11 +74,17 @@ def cmd_inventory(args) -> int:
                         "mtime": c.mtime,
                         "entries": [{
                             "request_url": e.request_url, "response_mime": e.response_mime,
-                            "response_status": e.response_status, "size": e.size,
+                            "response_status": e.response_status,
+                            "content_encoding": e.content_encoding, "size": e.size,
                             "body_sha256": e.body_sha256, "body_preview": e.body_preview,
-                            "body_entropy": e.body_entropy, "mtime": e.mtime,
+                            "body_text": e.body_text, "body_entropy": e.body_entropy,
+                            "crc_ok": e.crc_ok, "decoded": e.decoded, "mtime": e.mtime,
                         } for e in c.entries]} for c in o.caches],
         } for o in inv.origins],
+        "registrations": [{"origin": r.origin, "scope": r.scope,
+                           "script_url": r.script_url,
+                           "update_via_cache": r.update_via_cache}
+                          for r in inv.registrations],
     }
     text = json.dumps(out, indent=2)
     if args.out:
@@ -101,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     h = sub.add_parser("hunt", help="hunt an inventory for Cache-Storage abuse")
     h.add_argument("--inventory", required=True)
+    h.add_argument("--rules", default="", help="optional extra YARA-style rules JSON")
     h.add_argument("--json", action="store_true")
     h.set_defaults(func=cmd_hunt)
 

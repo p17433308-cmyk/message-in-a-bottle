@@ -34,9 +34,18 @@ def to_markdown(res: HuntResult, case_id: str = "UNASSIGNED", examiner: str = ""
     a("")
     s = res.stats
     a(f"Scanned {s.get('origins',0)} origin(s), {s.get('caches',0)} cache(s), "
-      f"{s.get('entries',0)} entr(y/ies); {s.get('findings',0)} finding(s), "
-      f"top severity {s.get('top_severity','none')}.")
+      f"{s.get('entries',0)} entr(y/ies), {s.get('registrations',0)} SW "
+      f"registration(s); risk score {s.get('risk_score',0)}, "
+      f"{s.get('findings',0)} finding(s), top severity {s.get('top_severity','none')}.")
     a("")
+    planted = [t for t in res.timeline if t.get("recently_planted")]
+    if planted:
+        a("## Timeline")
+        a(f"{len(planted)} entr(y/ies) were written after the cache baseline "
+          "(possible post-compromise planting):")
+        for t in planted:
+            a(f"- `{t.get('url','')}` in cache `{t.get('cache','')}`")
+        a("")
     a("## Findings")
     if not res.findings:
         a("_None._")

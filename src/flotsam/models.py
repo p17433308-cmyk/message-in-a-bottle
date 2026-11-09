@@ -18,22 +18,32 @@ class Severity(str, Enum):
 _ORDER = {s: i for i, s in enumerate(
     [Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL])}
 
+# Points each severity contributes to an entry's weighted risk score.
+SEVERITY_WEIGHT = {
+    Severity.INFO: 0, Severity.LOW: 1, Severity.MEDIUM: 3,
+    Severity.HIGH: 6, Severity.CRITICAL: 10,
+}
+
 
 class Verdict(str, Enum):
-    CLEAN = "clean"             # nothing notable
-    SUSPICIOUS = "suspicious"   # indicators worth a human look
-    COMPROMISED = "compromised" # strong abuse indicators
+    CLEAN = "clean"
+    SUSPICIOUS = "suspicious"
+    COMPROMISED = "compromised"
 
 
 @dataclass
 class CacheEntry:
     request_url: str = ""
     response_mime: str = ""
-    response_status: int = 200
-    size: int = 0
+    response_status: int = 0
+    content_encoding: str = ""      # as stored (gzip/br/deflate/"")
+    size: int = 0                   # decoded body size
     body_sha256: str = ""
-    body_preview: str = ""      # first bytes decoded, for signature matching
-    body_entropy: float = 0.0   # bits/byte
+    body_preview: str = ""          # first bytes decoded, for display only
+    body_text: str = ""             # FULL decoded text for signature scanning
+    body_entropy: float = 0.0       # bits/byte of the DECODED body
+    crc_ok: Optional[bool] = None   # Simple Cache CRC32 verified? None=unknown
+    decoded: bool = True            # was the body successfully decompressed?
     mtime: float = 0.0
 
 
@@ -41,9 +51,19 @@ class CacheEntry:
 class CacheBucket:
     name: str = ""
     guid: str = ""
-    in_index: bool = True       # referenced by CacheStorage index?
+    in_index: bool = True
+    index_format: str = "unknown"   # text | protobuf | unknown
     mtime: float = 0.0
     entries: list[CacheEntry] = field(default_factory=list)
+
+
+@dataclass
+class Registration:
+    """A registered Service Worker (from Service Worker/Database LevelDB)."""
+    origin: str = ""
+    scope: str = ""
+    script_url: str = ""
+    update_via_cache: str = ""      # all | imports | none
 
 
 @dataclass
@@ -58,6 +78,7 @@ class Inventory:
     profile: str = ""
     extracted_at: float = 0.0
     origins: list[OriginStore] = field(default_factory=list)
+    registrations: list[Registration] = field(default_factory=list)
 
 
 @dataclass
@@ -68,6 +89,7 @@ class Finding:
     cache: str
     request_url: str
     detail: str
+    weight: int = 0
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -80,11 +102,13 @@ class HuntResult:
     verdict: Verdict
     findings: list[Finding] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    timeline: list[dict] = field(default_factory=list)
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps({
             "verdict": self.verdict.value,
             "stats": self.stats,
+            "timeline": self.timeline,
             "findings": [f.as_dict() for f in self.findings],
         }, indent=indent)
 

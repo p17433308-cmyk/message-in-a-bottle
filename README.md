@@ -28,13 +28,21 @@ and times them:
 
 | Rule | Signal |
 |------|--------|
+| `active-persistence` | cached code under an origin with an **active Service Worker registration** (live persistence, not a dead file) |
+| `registered-script-cached` | the cached resource **is** a registered worker script — tamper it and it re-runs origin-wide |
 | `orphaned-cache` | cache on disk but absent from the CacheStorage index (planted / index-tampered) |
-| `cross-origin-entry` | a response from another origin cached under the victim origin |
-| `payload-signature` | `eval` / `atob` / `Function()` / `importScripts` / base64 blob / WS-SSE / beacon |
-| `obfuscated-body` | high-entropy text/script body (packed/obfuscated) |
-| `cached-executable` | JS/HTML cached (INFO context; dangerous combined with the above) |
+| `cross-origin-entry` | a response from another origin cached under the victim origin (reputable CDNs down-ranked via allowlist) |
+| `dynamic-eval` / `base64-decode` / `import-scripts` / `live-channel` / `exfil-beacon` / `keylogger` / `formjacker` / `crypto-miner` / … | extensible **YARA-style rules** scanned over the **full decoded body** |
+| `obfuscated-body` | high-entropy decoded text/script (packed/obfuscated) |
+| `crc-mismatch` | stored Simple Cache CRC32 ≠ body — corruption or post-write tampering |
+| `recently-planted` | entry written well after the cache baseline (timeline anomaly) |
 
-Verdicts: `CLEAN` · `SUSPICIOUS` · `COMPROMISED`.
+Verdicts: `CLEAN` · `SUSPICIOUS` · `COMPROMISED`, from a **weighted risk score** (not just max severity).
+
+**Also:** parses real Service Worker registrations (`Service Worker/Database` LevelDB),
+decompresses gzip/deflate (brotli if available) before analysis, verifies CRC32,
+builds a timeline, notes sibling channels (IndexedDB / Push), and loads custom
+rules with `--rules yourrules.json`.
 
 ## Quick start
 

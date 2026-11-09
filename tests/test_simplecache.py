@@ -1,47 +1,48 @@
-"""Byte-accurate round-trip test for the native Simple Cache reader.
-
-We synthesize a Simple Cache entry file exactly per the documented on-disk
-format, then prove the reader recovers the key/URL, body, and MIME. This
-validates the parser against the real format without needing a live browser.
-"""
-import sys, pathlib, struct, zlib
+"""Byte-accurate round-trip test for the native Simple Cache reader + helpers."""
+import sys, pathlib, zlib, gzip
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from flotsam.simplecache import (
-    parse_entry, sniff_mime, INITIAL_MAGIC, FINAL_MAGIC, HEADER, EOF,
+    parse_entry, parse_meta, decompress, INITIAL_MAGIC, FINAL_MAGIC,
+    HEADER, EOF, FLAG_HAS_CRC32,
 )
 
 
-def build_entry(key: bytes, body: bytes, meta: bytes) -> bytes:
-    """Produce a valid Simple Cache file: header|key|stream1|EOF1|stream0|EOF0."""
+def build_entry(key: bytes, body: bytes, meta: bytes, with_crc=True) -> bytes:
     out = bytearray()
     out += HEADER.pack(INITIAL_MAGIC, 5, len(key), 0)
-    out += key
-    out += body                                   # stream 1 = body
-    out += EOF.pack(FINAL_MAGIC, 0, zlib.crc32(body) & 0xffffffff, len(body))
-    out += meta                                   # stream 0 = metadata
+    out += key + body
+    flags = FLAG_HAS_CRC32 if with_crc else 0
+    out += EOF.pack(FINAL_MAGIC, flags, zlib.crc32(body) & 0xffffffff, len(body))
+    out += meta
     out += EOF.pack(FINAL_MAGIC, 0, zlib.crc32(meta) & 0xffffffff, len(meta))
     return bytes(out)
 
 
-def test_roundtrip_basic():
+def test_roundtrip_and_crc_ok():
     key = b"_dk_https://victim.example https://victim.example https://evil.tld/p.js"
     body = b"var p=atob('AAAA');eval(p);"
-    meta = b"\x00\x00HTTP/1.1 200 OK\x00Content-Type: application/javascript\x00"
-    blob = build_entry(key, body, meta)
-    e = parse_entry(blob)
-    assert e.url == "https://evil.tld/p.js", e.url
-    assert e.body == body, e.body
-    assert sniff_mime(e.meta, e.body) == "application/javascript"
-
-
-def test_roundtrip_html_sniff():
-    key = b"https://x.example/index.html"
-    body = b"<!DOCTYPE html><title>ok</title>"
-    meta = b"garbage-without-content-type"
+    meta = b"\x00HTTP/1.1 200 OK\x00Content-Type: application/javascript\x00"
     e = parse_entry(build_entry(key, body, meta))
-    assert e.url == "https://x.example/index.html"
-    assert sniff_mime(e.meta, e.body) == "text/html"
+    assert e.url == "https://evil.tld/p.js", e.url
+    assert e.body == body
+    assert e.body_crc_ok is True
+    status, headers = parse_meta(e.meta)
+    assert status == 200, status
+    assert headers.get("content-type") == "application/javascript"
+
+
+def test_crc_mismatch_detected():
+    blob = bytearray(build_entry(b"k", b"hello world body", b"m"))
+    blob[HEADER.size + 1] ^= 0xFF  # corrupt one body byte
+    e = parse_entry(bytes(blob))
+    assert e.body_crc_ok is False
+
+
+def test_decompress_gzip():
+    raw = b"console.log('ok')" * 50
+    data, ok = decompress(gzip.compress(raw), "gzip")
+    assert ok and data == raw
 
 
 def test_rejects_bad_magic():

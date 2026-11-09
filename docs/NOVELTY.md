@@ -20,13 +20,19 @@ Pre-emptive answer to "what's new vs. existing work?"
 > orphaned caches, cross-origin staging, payload signatures and obfuscation, and
 > produces an IR verdict + report.
 
-## Three defensible contributions
-1. **An abuse-detection ruleset** for Cache Storage, tuned to be low-false-positive
-   (caching your own JS is normal; cross-origin/orphaned/obfuscated is not).
-2. **A reproducible inventory format** so hunts are offline, auditable, and shareable
-   as teaching/ evidence packs.
-3. **The first open hunting tool (FLOTSAM)** bridging a documented-but-ignored attack
-   to day-to-day IR.
+## Defensible contributions
+1. **Registration-correlated detection** — FLOTSAM joins Cache Storage entries to
+   the actual Service Worker **registration** (origin → script, scope,
+   updateViaCache) recovered from `Service Worker/Database`. That turns "a
+   suspicious file" into "a payload served by a LIVE, origin-wide worker." No
+   open tool does this correlation.
+2. **A low-false-positive, extensible ruleset** — full-body (not preview) signature
+   scanning after decompression, a CDN allowlist, weighted scoring, and
+   user-loadable YARA-style rules.
+3. **A reproducible inventory format + native zero-dependency parser** so hunts are
+   offline, auditable, and shareable as teaching/evidence packs — no `ccl` install.
+4. **Timeline + tamper signals** — CRC32 verification and baseline-relative planting
+   detection, which the parsing-only prior art does not provide.
 
 ## What we explicitly do NOT claim
 - Not the first to parse Cache Storage (ccl does). We depend on it for body extraction.

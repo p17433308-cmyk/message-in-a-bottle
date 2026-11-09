@@ -1,116 +1,181 @@
 """The abuse-hunting engine.
 
-Walks an Inventory of Service Worker Cache Storage and emits Findings for the
-indicators that academic work ties to Cache-Storage abuse. Each rule maps to a
-concrete, defensible statement an analyst can act on. This is a hunting lens,
-not a parser — it answers "did an attacker hide something here?", not "what is
-cached?".
+Walks an Inventory of Service Worker Cache Storage and emits weighted Findings
+for the indicators academic work ties to Cache-Storage abuse, correlates them
+with actual Service Worker registrations (proof of live persistence), applies a
+CDN allowlist to cut false positives, and builds a timeline that flags recently
+planted entries. A hunting lens, not a parser.
 """
 from __future__ import annotations
 
-import re
+from collections import Counter
+from statistics import median
 from urllib.parse import urlparse
 
 from .models import (
-    Inventory, Finding, HuntResult, Severity, Verdict, max_severity,
+    Inventory, Finding, HuntResult, Severity, Verdict,
+    SEVERITY_WEIGHT, max_severity,
 )
+from .rules import default_rules, Rule
 
+# Reputable public CDNs: cross-origin caching from these is normal, so down-rank.
+_CDN_ALLOWLIST = {
+    "cdnjs.cloudflare.com", "cdn.jsdelivr.net", "ajax.googleapis.com",
+    "fonts.googleapis.com", "fonts.gstatic.com", "www.gstatic.com",
+    "unpkg.com", "code.jquery.com", "stackpath.bootstrapcdn.com",
+    "maxcdn.bootstrapcdn.com", "cdn.skypack.dev", "esm.sh", "jsdelivr.net",
+    "d3js.org", "polyfill.io",
+}
 _SCRIPT_MIMES = {
     "application/javascript", "text/javascript", "application/x-javascript",
     "application/ecmascript", "text/ecmascript", "application/wasm",
 }
 _MARKUP_MIMES = {"text/html", "application/xhtml+xml"}
-
-# Signatures seen in cached payloads / webshells / loaders.
-_PAYLOAD_SIGS = [
-    (re.compile(r"\beval\s*\("), "eval() in cached body"),
-    (re.compile(r"\bFunction\s*\(\s*['\"]"), "Function() constructor from string"),
-    (re.compile(r"\batob\s*\("), "base64 decode (atob) in cached body"),
-    (re.compile(r"importScripts\s*\("), "importScripts() — SW pulling extra code"),
-    (re.compile(r"(?:[A-Za-z0-9+/]{120,}={0,2})"), "long base64 blob"),
-    (re.compile(r"\bWebSocket\s*\(|\bnew\s+EventSource\b"), "live channel (WS/SSE) in cached code"),
-    (re.compile(r"navigator\.sendBeacon|fetch\([^)]*(?:collect|exfil|log)"), "exfil-style beacon"),
-]
+_RECENT_GAP = 3600.0   # seconds a "newer" entry must lead the baseline to flag
 
 
-def _origin_of(url: str) -> str:
+def _host(url: str) -> str:
     try:
-        p = urlparse(url)
-        if p.scheme and p.netloc:
-            return f"{p.scheme}://{p.netloc}"
+        return urlparse(url).netloc.lower()
     except Exception:  # noqa: BLE001
-        pass
-    return ""
+        return ""
 
 
-def hunt(inv: Inventory) -> HuntResult:
+def _origin(url: str) -> str:
+    p = urlparse(url)
+    return f"{p.scheme}://{p.netloc}" if p.scheme and p.netloc else ""
+
+
+def hunt(inv: Inventory, rules: list[Rule] | None = None) -> HuntResult:
+    rules = rules or default_rules()
     findings: list[Finding] = []
     n_origins = n_caches = n_entries = 0
+    all_mtimes: list[float] = []
+
+    reg_origins = {r.origin for r in inv.registrations if r.origin}
+    reg_scripts = {r.script_url for r in inv.registrations if r.script_url}
+    reg_by_origin = {r.origin: r for r in inv.registrations}
+
+    def add(rule, sev, origin, cache, url, detail):
+        findings.append(Finding(rule, sev, origin, cache, url, detail,
+                                weight=SEVERITY_WEIGHT[sev]))
 
     for store in inv.origins:
         n_origins += 1
-        own_origin = store.origin
+        own = store.origin
+        # Infer the store's true origin once, from the modal origin of ALL its
+        # entries (the registering origin dominates a legit profile). Used only
+        # when `own` is an opaque hash (deep extract).
+        if own and not own.startswith("(hash:"):
+            store_origin = own
+        else:
+            ens = [_origin(x.request_url) for c in store.caches
+                   for x in c.entries if _origin(x.request_url)]
+            store_origin = Counter(ens).most_common(1)[0][0] if ens else own
         for cache in store.caches:
             n_caches += 1
-
-            # Rule R1: orphaned cache (present on disk but not in the index).
-            # CacheStorage deletes unindexed caches on init, so an orphan that is
-            # still present suggests very recent planting or index tampering.
             if not cache.in_index:
-                findings.append(Finding(
-                    "orphaned-cache", Severity.HIGH, own_origin, cache.name, "",
-                    "cache present on disk but absent from CacheStorage index — "
-                    "recently planted or index tampered (CacheStorage normally "
-                    "deletes unindexed caches on startup)"))
-
+                add("orphaned-cache", Severity.HIGH, own, cache.name, "",
+                    "cache present on disk but absent from the CacheStorage index "
+                    f"(index format: {cache.index_format}) — recently planted or "
+                    "index tampered")
+            base_origin = store_origin
             for e in cache.entries:
                 n_entries += 1
+                if e.mtime:
+                    all_mtimes.append(e.mtime)
                 mime = (e.response_mime or "").split(";")[0].strip().lower()
-                body = e.body_preview or ""
-                ent_origin = _origin_of(e.request_url)
+                text = e.body_text or e.body_preview or ""
+                ent_origin = _origin(e.request_url)
+                ent_host = _host(e.request_url)
 
-                # Rule R2: executable content cached (context only). Caching same-
-                # origin JS/HTML is normal PWA behaviour, so this is INFO on its
-                # own — it becomes dangerous combined with R1/R3/R4/R5 below.
+                # R0: CRC mismatch = corruption or tampering.
+                if e.crc_ok is False:
+                    add("crc-mismatch", Severity.MEDIUM, own, cache.name, e.request_url,
+                        "stored Simple Cache CRC32 does not match the body — "
+                        "corruption or post-write tampering")
+
+                # R1: executable content (INFO context unless combined).
                 if mime in _SCRIPT_MIMES or mime in _MARKUP_MIMES:
-                    findings.append(Finding(
-                        "cached-executable", Severity.INFO, own_origin, cache.name, e.request_url,
-                        f"executable content ({mime}) stored in Cache Storage — "
-                        "normal for a PWA, but it is what a service worker can "
-                        "serve origin-wide; review alongside other findings"))
+                    add("cached-executable", Severity.INFO, own, cache.name, e.request_url,
+                        f"executable content ({mime}) in Cache Storage — normal for "
+                        "a PWA, risky combined with other findings")
 
-                # Rule R3: cross-origin payload staged under victim origin.
-                if ent_origin and own_origin and ent_origin != own_origin:
-                    findings.append(Finding(
-                        "cross-origin-entry", Severity.HIGH, own_origin, cache.name, e.request_url,
-                        f"response from a DIFFERENT origin ({ent_origin}) cached "
-                        f"under {own_origin} — classic cross-origin payload staging"))
+                # R2: cross-origin staging, down-ranked for reputable CDNs.
+                if ent_origin and base_origin and ent_origin != base_origin:
+                    if ent_host in _CDN_ALLOWLIST or any(
+                            ent_host.endswith("." + d) for d in _CDN_ALLOWLIST):
+                        add("cross-origin-cdn", Severity.LOW, own, cache.name, e.request_url,
+                            f"cross-origin entry from a reputable CDN ({ent_host}) — "
+                            "usually benign; verify integrity")
+                    else:
+                        add("cross-origin-entry", Severity.HIGH, own, cache.name, e.request_url,
+                            f"response from a different origin ({ent_origin}) cached "
+                            f"under {base_origin} — cross-origin payload staging")
 
-                # Rule R4: payload signatures in the body.
-                for rx, why in _PAYLOAD_SIGS:
-                    if rx.search(body):
-                        findings.append(Finding(
-                            "payload-signature", Severity.HIGH, own_origin, cache.name, e.request_url,
-                            f"suspicious pattern in cached body: {why}"))
-                        break
+                # R3: payload signatures over the FULL decoded body.
+                if text:
+                    for rule in rules:
+                        if rule.pattern.search(text):
+                            findings.append(Finding(
+                                rule.name, rule.severity, own, cache.name, e.request_url,
+                                rule.description, weight=rule.weight))
 
-                # Rule R5: obfuscation — high-entropy text body.
-                if (mime.startswith("text/") or mime in _SCRIPT_MIMES) and e.body_entropy >= 5.3:
-                    findings.append(Finding(
-                        "obfuscated-body", Severity.MEDIUM, own_origin, cache.name, e.request_url,
-                        f"text/script body has high entropy ({e.body_entropy:.2f} "
-                        "bits/byte) — likely packed/obfuscated"))
+                # R4: obfuscation — high entropy on DECODED text/script only.
+                if (mime.startswith("text/") or mime in _SCRIPT_MIMES) and e.decoded \
+                        and e.body_entropy >= 5.6:
+                    add("obfuscated-body", Severity.MEDIUM, own, cache.name, e.request_url,
+                        f"decoded text/script body entropy {e.body_entropy:.2f} "
+                        "bits/byte — likely packed/obfuscated")
 
-    verdict = Verdict.CLEAN
+                # R5: the cached resource IS a registered worker script.
+                if e.request_url and e.request_url in reg_scripts:
+                    add("registered-script-cached", Severity.HIGH, own, cache.name,
+                        e.request_url,
+                        "this cached resource is a REGISTERED service-worker script — "
+                        "if tampered, it re-runs on every visit, origin-wide")
+
+                # R6: payload lives under an origin with an ACTIVE registration.
+                if ent_origin in reg_origins and (mime in _SCRIPT_MIMES):
+                    r = reg_by_origin.get(ent_origin)
+                    scope = r.scope if r else ent_origin
+                    add("active-persistence", Severity.HIGH, own, cache.name, e.request_url,
+                        f"origin {ent_origin} has an ACTIVE service-worker "
+                        f"registration (scope {scope}); cached code here is live "
+                        "persistence, not a dead file")
+
+    # Timeline: flag entries much newer than the install baseline.
+    timeline: list[dict] = []
+    if all_mtimes:
+        base = median(all_mtimes)
+        newest = max(all_mtimes)
+        for store in inv.origins:
+            for cache in store.caches:
+                for e in cache.entries:
+                    recent = bool(e.mtime) and (e.mtime - base) > _RECENT_GAP
+                    timeline.append({"mtime": e.mtime, "url": e.request_url,
+                                     "cache": cache.name, "recently_planted": recent})
+                    if recent and (e.response_mime.split("/")[0] in ("text", "application")):
+                        add("recently-planted", Severity.MEDIUM, store.origin,
+                            cache.name, e.request_url,
+                            f"entry written {int(e.mtime - base)}s after the cache "
+                            "baseline — out of step with the rest of the profile")
+        timeline.sort(key=lambda d: d["mtime"])
+
+    # Weighted scoring + verdict.
+    score = sum(f.weight for f in findings)
     top = max_severity(findings)
-    if top in (Severity.CRITICAL, Severity.HIGH):
+    if top in (Severity.CRITICAL, Severity.HIGH) or score >= 10:
         verdict = Verdict.COMPROMISED
-    elif top in (Severity.MEDIUM, Severity.LOW):
+    elif top in (Severity.MEDIUM, Severity.LOW) or score >= 3:
         verdict = Verdict.SUSPICIOUS
+    else:
+        verdict = Verdict.CLEAN
 
     stats = {
         "origins": n_origins, "caches": n_caches, "entries": n_entries,
-        "findings": len(findings),
+        "registrations": len(inv.registrations),
+        "findings": len(findings), "risk_score": score,
         "top_severity": top.value if top else "none",
     }
-    return HuntResult(verdict, findings, stats)
+    return HuntResult(verdict, findings, stats, timeline)

@@ -1,0 +1,23 @@
+[
+  {
+    "name": "magecart-skimmer",
+    "pattern": "(?:onestepcheckout|billing|cc-?number|cardnumber)[^;]{0,40}(?:sendBeacon|fetch|XMLHttpRequest)",
+    "severity": "critical",
+    "weight": 10,
+    "description": "card-field value paired with an exfil call — Magecart-style skimmer"
+  },
+  {
+    "name": "cookie-theft",
+    "pattern": "document\\.cookie[^;]{0,60}(?:fetch|sendBeacon|new\\s+Image|\\.src\\s*=)",
+    "severity": "high",
+    "weight": 6,
+    "description": "document.cookie read paired with an outbound send"
+  },
+  {
+    "name": "webauthn-hook",
+    "pattern": "navigator\\.credentials\\.(get|create)\\s*\\(",
+    "severity": "medium",
+    "weight": 3,
+    "description": "WebAuthn/passkey API hooked from cached code"
+  }
+]
