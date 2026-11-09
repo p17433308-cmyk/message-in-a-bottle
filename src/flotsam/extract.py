@@ -55,7 +55,9 @@ def _guid_in_index(guid: str, index_blob: set, fmt: str) -> bool:
 
 
 def read_cache_dir(cache_dir: str) -> list[CacheEntry]:
-    entries: list[CacheEntry] = []
+    # Chromium may split one entry across `_0`/`_1` files that share the key, so
+    # we key by URL and keep the richest (longest-body) parse per URL.
+    best: dict[str, CacheEntry] = {}
     for name in sorted(os.listdir(cache_dir)):
         path = os.path.join(cache_dir, name)
         if not os.path.isfile(path) or name.startswith("index"):
@@ -65,7 +67,7 @@ def read_cache_dir(cache_dir: str) -> list[CacheEntry]:
                 data = fh.read()
             e = parse_entry(data)
         except (SimpleCacheError, OSError):
-            continue  # not a single-file Simple Cache entry (or multi-file)
+            continue
 
         status, headers = parse_meta(e.meta)
         enc = headers.get("content-encoding", "")
@@ -74,14 +76,27 @@ def read_cache_dir(cache_dir: str) -> list[CacheEntry]:
         if not mime:
             mime = _sniff(decoded_body)
         text = decoded_body.decode("utf-8", "replace")
-        entries.append(CacheEntry(
+        entry = CacheEntry(
             request_url=e.url, response_mime=mime, response_status=status,
             content_encoding=enc, size=len(decoded_body),
             body_sha256=hashlib.sha256(decoded_body).hexdigest(),
             body_preview=text[:512], body_text=text,
             body_entropy=_entropy(decoded_body),
-            crc_ok=e.body_crc_ok, decoded=ok, mtime=os.path.getmtime(path)))
-    return entries
+            crc_ok=e.body_crc_ok, decoded=ok, mtime=os.path.getmtime(path))
+        # When `_0`/`_1` siblings both parse to the same URL, prefer the one
+        # whose body is actual text/content (the other is a binary side-stream).
+        prev = best.get(e.url)
+        if prev is None or _text_score(entry) > _text_score(prev):
+            best[e.url] = entry
+    return list(best.values())
+
+
+def _text_score(e: CacheEntry) -> tuple:
+    t = e.body_text
+    if not t:
+        return (0.0, 0)
+    printable = sum(1 for c in t if c.isprintable() or c in "\n\t\r")
+    return (printable / len(t), len(t))
 
 
 def _sniff(body: bytes) -> str:

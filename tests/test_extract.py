@@ -13,10 +13,10 @@ from flotsam.models import Verdict
 
 def _entry(key: bytes, body: bytes, meta: bytes) -> bytes:
     out = bytearray()
-    out += HEADER.pack(INITIAL_MAGIC, 5, len(key), 0)
+    out += HEADER.pack(INITIAL_MAGIC, 5, len(key), 0) + b"\x00\x00\x00\x00"
     out += key + body
     out += EOF.pack(FINAL_MAGIC, 0, zlib.crc32(body) & 0xffffffff, len(body))
-    out += meta
+    out += b"\x00\x00\x00\x00" + meta
     out += EOF.pack(FINAL_MAGIC, 0, zlib.crc32(meta) & 0xffffffff, len(meta))
     return bytes(out)
 

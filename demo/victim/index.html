@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Victim PWA</title>
+</head>
+<body>
+  <h1>Totally Legit Banking PWA</h1>
+  <script src="/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' })
+        .then(r => console.log('SW registered', r.scope));
+    }
+  </script>
+</body>
+</html>

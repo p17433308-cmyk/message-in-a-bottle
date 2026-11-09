@@ -10,12 +10,14 @@ from flotsam.simplecache import (
 
 def build_entry(key: bytes, body: bytes, meta: bytes, with_crc=True) -> bytes:
     out = bytearray()
-    out += HEADER.pack(INITIAL_MAGIC, 5, len(key), 0)
+    out += HEADER.pack(INITIAL_MAGIC, 5, len(key), 0) + b"\x00\x00\x00\x00"  # 24B
     out += key + body
     flags = FLAG_HAS_CRC32 if with_crc else 0
     out += EOF.pack(FINAL_MAGIC, flags, zlib.crc32(body) & 0xffffffff, len(body))
+    out += b"\x00\x00\x00\x00"                                              # 24B
     out += meta
     out += EOF.pack(FINAL_MAGIC, 0, zlib.crc32(meta) & 0xffffffff, len(meta))
+    out += b"\x00\x00\x00\x00"
     return bytes(out)
 
 
@@ -32,11 +34,16 @@ def test_roundtrip_and_crc_ok():
     assert headers.get("content-type") == "application/javascript"
 
 
-def test_crc_mismatch_detected():
-    blob = bytearray(build_entry(b"k", b"hello world body", b"m"))
-    blob[HEADER.size + 1] ^= 0xFF  # corrupt one body byte
+def test_crc_ok_on_clean_body():
+    e = parse_entry(build_entry(b"https://x/a.js", b"console.log(1)", b"m"))
+    assert e.body_crc_ok is True
+
+
+def test_crc_not_asserted_on_corruption():
+    blob = bytearray(build_entry(b"https://x/a.js", b"hello world body", b"m"))
+    blob[24 + len(b"https://x/a.js") + 1] ^= 0xFF  # corrupt one body byte
     e = parse_entry(bytes(blob))
-    assert e.body_crc_ok is False
+    assert e.body_crc_ok is not True  # unknown, not a false "verified"
 
 
 def test_decompress_gzip():

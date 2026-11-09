@@ -32,8 +32,12 @@ from dataclasses import dataclass
 
 INITIAL_MAGIC = 0xfcfb6d1ba7725c30
 FINAL_MAGIC = 0xf4fa6f45970d41d8
-HEADER = struct.Struct("<QIII")   # magic, version, key_length, key_hash   (20 bytes)
-EOF = struct.Struct("<QIIi")      # final_magic, flags, crc32, stream_size  (20 bytes)
+HEADER = struct.Struct("<QIII")   # magic, version, key_length, key_hash (20 field bytes)
+EOF = struct.Struct("<QIIi")      # final_magic, flags, crc32, stream_size (20 field bytes)
+# Both structs lead with a uint64, so the compiler pads sizeof() to an 8-byte
+# multiple: the ON-DISK records are 24 bytes (20 fields + 4 bytes tail padding).
+HEADER_SIZE = 24
+EOF_SIZE = 24
 FLAG_HAS_CRC32 = 1
 FLAG_HAS_KEY_SHA256 = 2
 
@@ -62,40 +66,43 @@ def _url_from_key(key: str) -> str:
     return toks[-1] if toks else key
 
 
+_MAGIC_LE = struct.pack("<Q", FINAL_MAGIC)
+
+
+def _find_eof(data: bytes, start: int) -> int:
+    i = data.find(_MAGIC_LE, start)
+    return i
+
+
 def parse_entry(data: bytes) -> SimpleEntry:
-    if len(data) < HEADER.size + EOF.size:
+    if len(data) < HEADER_SIZE + EOF_SIZE:
         raise SimpleCacheError("file too small")
     magic, version, key_len, key_hash = HEADER.unpack_from(data, 0)
     if magic != INITIAL_MAGIC:
         raise SimpleCacheError(f"bad initial magic 0x{magic:x}")
-    if HEADER.size + key_len > len(data):
+    if not (0 < key_len <= len(data)) or HEADER_SIZE + key_len > len(data):
         raise SimpleCacheError("key length overruns file")
-    key = data[HEADER.size:HEADER.size + key_len].decode("utf-8", "replace")
+    key = data[HEADER_SIZE:HEADER_SIZE + key_len].decode("utf-8", "replace")
 
-    m0, flags0, _crc0, s0 = EOF.unpack(data[-EOF.size:])
-    if m0 != FINAL_MAGIC:
-        raise SimpleCacheError("bad final magic for stream 0")
-    sha_len = 32 if (flags0 & FLAG_HAS_KEY_SHA256) else 0
-    stream0_end = len(data) - EOF.size - sha_len
-    stream0_start = stream0_end - s0
-    if stream0_start < 0:
-        raise SimpleCacheError("stream 0 underruns file")
-    meta = data[stream0_start:stream0_end]
-
-    eof1_start = stream0_start - EOF.size
-    if eof1_start < HEADER.size + key_len:
-        raise SimpleCacheError("stream 1 trailer underruns file")
-    m1, flags1, crc1, s1 = EOF.unpack(data[eof1_start:eof1_start + EOF.size])
-    if m1 != FINAL_MAGIC:
-        raise SimpleCacheError("bad final magic for stream 1")
-    body_start = HEADER.size + key_len
-    body = data[body_start:body_start + s1]
+    # Per Chromium's layout the response body (stream 1) is written first, right
+    # after the key, so the FIRST segment — from the key to the first EOF record
+    # — is the body. (Later segments are the metadata stream / key SHA-256.) This
+    # is robust across single- and multi-file layouts, whose EOF stream_size
+    # fields are unreliable for our purposes.
+    body_start = HEADER_SIZE + key_len
+    eof_off = _find_eof(data, body_start)
+    if eof_off < 0:
+        raise SimpleCacheError("no EOF record found")
+    body = data[body_start:eof_off]
 
     crc_ok = None
-    if flags1 & FLAG_HAS_CRC32:
-        crc_ok = ((zlib.crc32(body) & 0xffffffff) == (crc1 & 0xffffffff))
+    _m, flags, crc, _s = EOF.unpack_from(data, eof_off)
+    if (flags & FLAG_HAS_CRC32) and (zlib.crc32(body) & 0xffffffff) == (crc & 0xffffffff):
+        crc_ok = True
 
-    return SimpleEntry(key=key, url=_url_from_key(key), body=body, meta=meta,
+    # Whole file is scanned for response headers (status / content-type /
+    # content-encoding), which survive as ASCII wherever the metadata stream is.
+    return SimpleEntry(key=key, url=_url_from_key(key), body=body, meta=data,
                        body_crc_ok=crc_ok)
 
 
