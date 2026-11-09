@@ -79,6 +79,7 @@ class Inventory:
     extracted_at: float = 0.0
     origins: list[OriginStore] = field(default_factory=list)
     registrations: list[Registration] = field(default_factory=list)
+    idb_values: list = field(default_factory=list)   # [(origin, text)] IndexedDB
 
 
 @dataclass

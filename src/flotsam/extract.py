@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from .models import Inventory, OriginStore, CacheBucket, CacheEntry
 from .simplecache import parse_entry, parse_meta, decompress, SimpleCacheError
 from .swreg import scan_registrations
+from .indexeddb import extract_values as _idb_values
 
 _DEFAULT_PORT = {"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21, "file": 0}
 
@@ -135,6 +136,8 @@ def deep_extract(profile_dir: str) -> Inventory:
     inv = Inventory(profile=profile_dir, extracted_at=time.time())
     # Correlate with actual Service Worker registrations (persistence proof).
     inv.registrations = scan_registrations(profile_dir)
+    # Sibling abuse channel: IndexedDB values (also a LevelDB on disk).
+    inv.idb_values = _idb_values(profile_dir)
     if not os.path.isdir(base):
         return inv
     for origin_hash in sorted(os.listdir(base)):

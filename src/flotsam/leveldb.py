@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 import struct
 
+from .snappy import try_decompress
+
 _BLOCK = 32768
 _TABLE_MAGIC = 0xdb4775248b80fb57
 
@@ -108,9 +110,12 @@ def _read_block(data: bytes, off: int, size: int):
     if off + size + 1 > len(data):
         return None
     comp = data[off + size]            # 1-byte compression type after block data
-    if comp != 0:                      # 0 = none; others (snappy/zstd) unsupported
-        return None
-    return data[off:off + size]
+    raw = data[off:off + size]
+    if comp == 0:                      # none
+        return raw
+    if comp == 1:                      # snappy
+        return try_decompress(raw)
+    return None                        # zstd/other unsupported
 
 
 def read_ldb(path: str) -> list:

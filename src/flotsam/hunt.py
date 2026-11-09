@@ -144,6 +144,24 @@ def hunt(inv: Inventory, rules: list[Rule] | None = None) -> HuntResult:
                         f"registration (scope {scope}); cached code here is live "
                         "persistence, not a dead file")
 
+    # Sibling channel: scan live IndexedDB values with the same rules.
+    n_idb = 0
+    seen_idb: set = set()
+    for origin, text in inv.idb_values:
+        if not text:
+            continue
+        n_idb += 1
+        for rule in rules:
+            key = (rule.name, origin)
+            if key in seen_idb:
+                continue
+            if rule.pattern.search(text):
+                seen_idb.add(key)
+                findings.append(Finding(
+                    f"idb:{rule.name}", rule.severity, origin or "(indexeddb)",
+                    "IndexedDB", "", f"IndexedDB value — {rule.description}",
+                    weight=rule.weight))
+
     # Timeline: flag entries much newer than the install baseline.
     timeline: list[dict] = []
     if all_mtimes:
@@ -174,7 +192,7 @@ def hunt(inv: Inventory, rules: list[Rule] | None = None) -> HuntResult:
 
     stats = {
         "origins": n_origins, "caches": n_caches, "entries": n_entries,
-        "registrations": len(inv.registrations),
+        "registrations": len(inv.registrations), "idb_values": n_idb,
         "findings": len(findings), "risk_score": score,
         "top_severity": top.value if top else "none",
     }

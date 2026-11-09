@@ -40,12 +40,14 @@ and times them:
 Verdicts: `CLEAN` · `SUSPICIOUS` · `COMPROMISED`, from a **weighted risk score** (not just max severity).
 
 **Also:** parses the `Service Worker/Database` **LevelDB** for real registrations
-(write-ahead log + SSTables, sequence-ordered and **tombstone-aware**, protobuf
-decoded) and reverses Chromium's CacheStorage **origin-hash** to attribute
-findings to the real origin; decompresses gzip/deflate (brotli if available)
-before analysis; verifies CRC32; builds a timeline; notes sibling channels
-(IndexedDB / Push); and loads custom rules with `--rules yourrules.json`.
-Entirely zero-dependency (pure stdlib).
+(write-ahead log + **Snappy-compressed SSTables**, sequence-ordered and
+**tombstone-aware**, protobuf decoded) and reverses Chromium's CacheStorage
+**origin-hash** to attribute findings to the real origin; **hunts the IndexedDB
+sibling channel** (also a LevelDB) with the same rules (`idb:` findings);
+decompresses gzip/deflate (brotli if available) before analysis; verifies CRC32;
+builds a timeline; and loads custom rules with `--rules yourrules.json`.
+Entirely **zero-dependency** (pure stdlib — includes its own Snappy and LevelDB
+readers).
 
 ## Quick start
 

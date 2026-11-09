@@ -38,6 +38,15 @@ Pre-emptive answer to "what's new vs. existing work?"
 4. **Timeline + tamper signals** — CRC32 verification and baseline-relative planting
    detection, which the parsing-only prior art does not provide.
 
+5. **Sibling-channel coverage** — the same rules hunt **IndexedDB** values (also a
+   LevelDB), so the talk covers two of the three documented abuse channels
+   (Cache Storage + IndexedDB), not one. A pure-Python **Snappy** + LevelDB stack
+   means compacted, long-lived real profiles parse too — not just fresh ones.
+
 ## What we explicitly do NOT claim
-- Not the first to parse Cache Storage (ccl does). We depend on it for body extraction.
+- Not the first to parse Cache Storage (ccl does). FLOTSAM's contribution is the
+  abuse-detection + correlation layer, and it is self-contained (its own Simple
+  Cache, LevelDB and Snappy readers).
 - No claim of intent from a single indicator; findings are for analyst review.
+- IndexedDB object-store values are scanned as text for IOCs, not fully
+  deserialized (Blink SSV); Firefox/Safari are future work.
