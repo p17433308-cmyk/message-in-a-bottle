@@ -1,0 +1,23 @@
+{
+  "profile": "SAMPLE-clean",
+  "extracted_at": 1762700000.0,
+  "origins": [
+    {
+      "origin": "https://news.example",
+      "origin_hash": "bbbb2222",
+      "caches": [
+        {
+          "name": "offline-v2", "guid": "g-ok", "in_index": true, "mtime": 1762600000.0,
+          "entries": [
+            {"request_url": "https://news.example/index.html", "response_mime": "text/html",
+             "response_status": 200, "size": 12000, "body_sha256": "ok1", "body_entropy": 4.2,
+             "body_preview": "<!doctype html><title>News</title>", "mtime": 1762600000.0},
+            {"request_url": "https://news.example/hero.jpg", "response_mime": "image/jpeg",
+             "response_status": 200, "size": 90000, "body_sha256": "ok2", "body_entropy": 7.8,
+             "body_preview": "", "mtime": 1762600000.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

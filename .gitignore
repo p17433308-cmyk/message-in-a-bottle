@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Captures / demo scratch (keep samples/, ignore ad-hoc runs)
+/tmp/
+*.img
+before.json
+after.json
+report.md
+
+# OS
+.DS_Store
