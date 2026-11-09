@@ -54,13 +54,24 @@ def cmd_simulate(args) -> int:
 
 
 def cmd_inventory(args) -> int:
-    inv = from_profile(os.path.expanduser(args.profile))
+    profile = os.path.expanduser(args.profile)
+    if args.deep:
+        from .extract import deep_extract
+        inv = deep_extract(profile)
+    else:
+        inv = from_profile(profile)
     out = {
         "profile": inv.profile,
         "origins": [{
             "origin": o.origin, "origin_hash": o.origin_hash,
             "caches": [{"name": c.name, "guid": c.guid, "in_index": c.in_index,
-                        "mtime": c.mtime, "entries": []} for c in o.caches],
+                        "mtime": c.mtime,
+                        "entries": [{
+                            "request_url": e.request_url, "response_mime": e.response_mime,
+                            "response_status": e.response_status, "size": e.size,
+                            "body_sha256": e.body_sha256, "body_preview": e.body_preview,
+                            "body_entropy": e.body_entropy, "mtime": e.mtime,
+                        } for e in c.entries]} for c in o.caches],
         } for o in inv.origins],
     }
     text = json.dumps(out, indent=2)
@@ -97,8 +108,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", default="/tmp/flotsam_sim.json")
     s.set_defaults(func=cmd_simulate)
 
-    i = sub.add_parser("inventory", help="structural inventory of a live Chromium profile")
+    i = sub.add_parser("inventory", help="inventory a live Chromium profile (--deep parses bodies)")
     i.add_argument("--profile", required=True)
+    i.add_argument("--deep", action="store_true",
+                   help="parse Simple Cache entry bodies (native reader, zero deps)")
     i.add_argument("--out", default="")
     i.set_defaults(func=cmd_inventory)
 

@@ -20,9 +20,11 @@ tools (ChromeCacheView, Axiom, KAPE) parse the HTTP cache, not Cache Storage.
 
 ## What FLOTSAM is (and is not)
 
-It is **not** another cache dumper — `ccl_chromium_reader` already parses
-Chromium caches. FLOTSAM is a **hunting lens** over an extracted inventory that
-flags the signs of abuse and times them:
+FLOTSAM ships its own **zero-dependency native reader** for Chromium's Simple
+Cache format (`flotsam inventory --deep`), so it parses real Service Worker Cache
+Storage entry bodies off disk with pure stdlib — no `ccl` install required. Its
+value over a plain dumper is the **hunting lens**: it flags the signs of abuse
+and times them:
 
 | Rule | Signal |
 |------|--------|
